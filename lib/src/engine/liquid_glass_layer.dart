@@ -766,9 +766,12 @@ class RenderLiquidGlassLayer extends LiquidGlassRenderObject
       // the offscreen surface when we're no longer using the backdrop path.
       _shaderHandle.layer = null;
       _clipRectLayerHandle.layer = null;
+      backdropPassClipRectLocal = null;
       return;
     }
     // BackdropFilter path (default): live compositor read via BackdropFilterLayer.
+    // Descendant glass reads this to express its uniforms against our pass.
+    backdropPassClipRectLocal = clipRect;
     final shaderLayer = (_shaderHandle.layer ??= BackdropFilterLayer())
       ..filter = ImageFilter.shader(renderShader!);
 

@@ -53,6 +53,45 @@ abstract class LiquidGlassRenderObject extends RenderProxyBox {
   /// The size that the geometry texture should have.
   Size get desiredMatteSize;
 
+  /// Local-space rect of the backdrop-reading pass this render object opened
+  /// on its last paint (the clip around its [BackdropFilterLayer]), or null
+  /// when it painted through a path that reads no backdrop. Descendant glass
+  /// uses it to find the render pass its own fragment coordinates are
+  /// relative to. See [enclosingBackdropPassRect].
+  Rect? backdropPassClipRectLocal;
+
+  /// Screen-space (logical) rect of the nearest ancestor render pass that a
+  /// [BackdropFilterLayer] in this subtree samples from, or null when that is
+  /// the root surface.
+  ///
+  /// On Impeller a `BackdropFilter` (Flutter's, or the one every own-layer
+  /// glass surface pushes) renders its subtree into an offscreen pass sized
+  /// to its clip. `FlutterFragCoord()` inside any shader nested in that
+  /// subtree is then relative to the pass, not the screen, and the backdrop
+  /// texture the nested shader samples IS that pass. The live path's uniforms
+  /// must be expressed against this rect rather than the screen.
+  Rect? enclosingBackdropPassRect() {
+    RenderObject? node = parent;
+    while (node != null) {
+      Rect? local;
+      if (node is RenderBackdropFilter) {
+        local = Offset.zero & node.size;
+      } else if (node is LiquidGlassRenderObject) {
+        local = node.backdropPassClipRectLocal;
+      }
+      if (local != null) {
+        final global = MatrixUtils.transformRect(
+          node.getTransformTo(null),
+          local,
+        );
+        // Coverage never exceeds the root surface.
+        return global.intersect(Offset.zero & desiredMatteSize);
+      }
+      node = node.parent;
+    }
+    return null;
+  }
+
   Matrix4 get matteTransform;
 
   late GeometryRenderLink _link;
@@ -331,16 +370,34 @@ abstract class LiquidGlassRenderObject extends RenderProxyBox {
         // The baseline visual thickness was tuned on a 3x Retina display.
         final scale = devicePixelRatio / 3.0;
 
+        // The pass this shader's FlutterFragCoord() and backdrop texture are
+        // relative to: the root surface, or the nearest ancestor backdrop pass
+        // (see enclosingBackdropPassRect). Impeller sizes the pass texture to
+        // whole physical pixels, so round the coverage out the same way.
+        final dpr = devicePixelRatio;
+        final passLogical = enclosingBackdropPassRect();
+        final passPhysical = passLogical == null
+            ? Offset.zero & (desiredMatteSize * dpr)
+            : Rect.fromLTRB(
+                (passLogical.left * dpr).floorToDouble(),
+                (passLogical.top * dpr).floorToDouble(),
+                (passLogical.right * dpr).ceilToDouble(),
+                (passLogical.bottom * dpr).ceilToDouble(),
+              );
+
         renderShader!
-          // Slot 0-1: uSize — physical-pixel size of the backdrop layer.
-          // Must be set before painting so the shader can derive correct screen UVs.
+          // Slot 0-1: uSize — physical-pixel size of the backdrop pass.
+          // Must be set before painting so the shader can derive correct UVs.
           ..setFloatUniforms(initialIndex: 0, (value) {
-            value.setSize(desiredMatteSize * devicePixelRatio);
+            value.setSize(passPhysical.size);
           })
+          // Slots 2-5: geometry matte in pass-relative physical pixels.
           ..setFloatUniforms(initialIndex: 2, (value) {
             value
-              ..setOffset(activeBounds.topLeft * devicePixelRatio)
-              ..setSize(activeBounds.size * devicePixelRatio);
+              ..setOffset(
+                activeBounds.topLeft * dpr - passPhysical.topLeft,
+              )
+              ..setSize(activeBounds.size * dpr);
           })
           ..setFloatUniforms(initialIndex: 6, (value) {
             value
