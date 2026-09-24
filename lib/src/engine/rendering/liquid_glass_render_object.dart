@@ -32,18 +32,32 @@ import '../snap_rect_to_pixels.dart';
 /// top-level function so render objects that are not glass -- the
 /// progressive blur -- express their coordinates the same way.
 ///
+/// A Flutter `BackdropFilter` paints its whole subtree inside its pass. A
+/// glass layer does not: only its shapes' contents are painted inside its
+/// pass, and everything else in its subtree is painted outside it, in tree
+/// order. So a glass layer is the enclosing pass only when the walk up from
+/// [node] went through one of that layer's shapes ([RenderLiquidGlass]) --
+/// a nested own-layer glass or a blur sitting beside a layer's shapes is
+/// inside whatever pass encloses the layer, not inside the layer's own.
+///
 /// [rootSize] bounds the result: coverage never exceeds the root surface.
 Rect? enclosingBackdropPassRectAbove(
   RenderObject node, {
   required Size rootSize,
 }) {
+  var throughShape = false;
   RenderObject? ancestor = node.parent;
   while (ancestor != null) {
     Rect? local;
     if (ancestor is RenderBackdropFilter) {
       local = Offset.zero & ancestor.size;
+    } else if (ancestor is RenderLiquidGlass) {
+      throughShape = true;
     } else if (ancestor is LiquidGlassRenderObject) {
-      local = ancestor.backdropPassClipRectLocal;
+      if (throughShape) {
+        local = ancestor.backdropPassClipRectLocal;
+      }
+      throughShape = false;
     }
     if (local != null) {
       final global = MatrixUtils.transformRect(
@@ -51,43 +65,6 @@ Rect? enclosingBackdropPassRectAbove(
         local,
       );
       return global.intersect(Offset.zero & rootSize);
-    }
-    ancestor = ancestor.parent;
-  }
-  return null;
-}
-
-/// Like [enclosingBackdropPassRectAbove], for a render object painted as
-/// part of a glass shape's contents: the screen-space (logical) rect of the
-/// pass of the nearest glass layer above [node] that [node] is actually
-/// painted inside of, or null when there is none.
-///
-/// A glass layer paints only its shapes' contents inside its backdrop pass;
-/// everything else in its subtree is painted outside it, in tree order. So
-/// a layer counts here only when the walk up from [node] passed through one
-/// of the layer's shapes ([RenderLiquidGlass]) on the way. Flutter's own
-/// `BackdropFilter` is not consulted: a paint shader drawn under one keeps
-/// its ordinary coordinates, unlike a filter shader (see
-/// [enclosingBackdropPassRectAbove]).
-Rect? enclosingGlassShapePassRectAbove(
-  RenderObject node, {
-  required Size rootSize,
-}) {
-  var throughShape = false;
-  RenderObject? ancestor = node.parent;
-  while (ancestor != null) {
-    if (ancestor is RenderLiquidGlass) {
-      throughShape = true;
-    } else if (ancestor is LiquidGlassRenderObject) {
-      final local = ancestor.backdropPassClipRectLocal;
-      if (throughShape && local != null) {
-        final global = MatrixUtils.transformRect(
-          ancestor.getTransformTo(null),
-          local,
-        );
-        return global.intersect(Offset.zero & rootSize);
-      }
-      throughShape = false;
     }
     ancestor = ancestor.parent;
   }
