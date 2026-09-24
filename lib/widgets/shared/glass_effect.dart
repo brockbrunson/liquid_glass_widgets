@@ -15,6 +15,8 @@ import 'inherited_liquid_glass.dart';
 
 import '../../types/glass_quality.dart';
 import 'adaptive_glass.dart';
+import '../../src/engine/rendering/liquid_glass_render_object.dart'
+    show enclosingGlassShapePassRectAbove;
 
 /// Enhanced glass renderer specifically for interactive indicators.
 ///
@@ -1014,10 +1016,35 @@ class _RenderInteractiveIndicator extends RenderProxyBox {
     final scaleX = matrix[0];
     final scaleY = matrix[5];
 
-    final physicalOrigin = Offset(
+    final canvasOrigin = Offset(
       canvasPhysicalX + (offset.dx * scaleX),
       canvasPhysicalY + (offset.dy * scaleY),
     );
+
+    // Painted as part of a glass shape's contents -- a tab bar's indicator
+    // inside its grouped glass track -- this draws inside that layer's
+    // backdrop pass, and on Impeller FlutterFragCoord() is then relative to
+    // the pass's clip (the layer's shapes' bounding box), not to the canvas
+    // the transform above measures from. Expressed against the canvas, the
+    // pill lands displaced by the clip's origin: as far above the bar as
+    // the layer's topmost shape is. The pass is located in screen space and
+    // sized in whole physical pixels, as the layer itself does.
+    final rootSize = switch (owner?.rootNode) {
+      final RenderView rv => rv.size,
+      final RenderBox rb => rb.size,
+      _ => Size.zero,
+    };
+    final shapePass = enclosingGlassShapePassRectAbove(this, rootSize: rootSize);
+    final Offset physicalOrigin;
+    if (shapePass == null) {
+      physicalOrigin = canvasOrigin;
+    } else {
+      final global = localToGlobal(Offset.zero);
+      physicalOrigin = Offset(
+        global.dx * scaleX - (shapePass.left * scaleX).floorToDouble(),
+        global.dy * scaleY - (shapePass.top * scaleY).floorToDouble(),
+      );
+    }
 
     // Keep uScale from canvas for shape calculations
     final uScale = Offset(scaleX, scaleY);

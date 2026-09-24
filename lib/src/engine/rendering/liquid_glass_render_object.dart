@@ -19,6 +19,7 @@ import '../../renderer/fragment_shader_extensions.dart';
 import '../../renderer/liquid_glass_renderer.dart'
     show debugPaintLiquidGlassGeometry;
 import '../liquid_glass_settings.dart';
+import '../liquid_glass.dart' show RenderLiquidGlass;
 import '../render_liquid_glass_geometry.dart';
 import '../snap_rect_to_pixels.dart';
 
@@ -50,6 +51,43 @@ Rect? enclosingBackdropPassRectAbove(
         local,
       );
       return global.intersect(Offset.zero & rootSize);
+    }
+    ancestor = ancestor.parent;
+  }
+  return null;
+}
+
+/// Like [enclosingBackdropPassRectAbove], for a render object painted as
+/// part of a glass shape's contents: the screen-space (logical) rect of the
+/// pass of the nearest glass layer above [node] that [node] is actually
+/// painted inside of, or null when there is none.
+///
+/// A glass layer paints only its shapes' contents inside its backdrop pass;
+/// everything else in its subtree is painted outside it, in tree order. So
+/// a layer counts here only when the walk up from [node] passed through one
+/// of the layer's shapes ([RenderLiquidGlass]) on the way. Flutter's own
+/// `BackdropFilter` is not consulted: a paint shader drawn under one keeps
+/// its ordinary coordinates, unlike a filter shader (see
+/// [enclosingBackdropPassRectAbove]).
+Rect? enclosingGlassShapePassRectAbove(
+  RenderObject node, {
+  required Size rootSize,
+}) {
+  var throughShape = false;
+  RenderObject? ancestor = node.parent;
+  while (ancestor != null) {
+    if (ancestor is RenderLiquidGlass) {
+      throughShape = true;
+    } else if (ancestor is LiquidGlassRenderObject) {
+      final local = ancestor.backdropPassClipRectLocal;
+      if (throughShape && local != null) {
+        final global = MatrixUtils.transformRect(
+          ancestor.getTransformTo(null),
+          local,
+        );
+        return global.intersect(Offset.zero & rootSize);
+      }
+      throughShape = false;
     }
     ancestor = ancestor.parent;
   }
