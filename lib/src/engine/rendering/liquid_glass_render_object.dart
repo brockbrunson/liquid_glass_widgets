@@ -24,6 +24,38 @@ import '../snap_rect_to_pixels.dart';
 
 /// A render object that can assemble [RenderLiquidGlassGeometry] shapes and
 /// render them to the screen with the liquid glass effect.
+/// Screen-space (logical) rect of the nearest render pass above [node] that a
+/// [BackdropFilterLayer] in its subtree samples from, or null when that is
+/// the root surface. See [LiquidGlassRenderObject.enclosingBackdropPassRect]
+/// for why any backdrop-reading shader nested in such a pass needs this. A
+/// top-level function so render objects that are not glass -- the
+/// progressive blur -- express their coordinates the same way.
+///
+/// [rootSize] bounds the result: coverage never exceeds the root surface.
+Rect? enclosingBackdropPassRectAbove(
+  RenderObject node, {
+  required Size rootSize,
+}) {
+  RenderObject? ancestor = node.parent;
+  while (ancestor != null) {
+    Rect? local;
+    if (ancestor is RenderBackdropFilter) {
+      local = Offset.zero & ancestor.size;
+    } else if (ancestor is LiquidGlassRenderObject) {
+      local = ancestor.backdropPassClipRectLocal;
+    }
+    if (local != null) {
+      final global = MatrixUtils.transformRect(
+        ancestor.getTransformTo(null),
+        local,
+      );
+      return global.intersect(Offset.zero & rootSize);
+    }
+    ancestor = ancestor.parent;
+  }
+  return null;
+}
+
 abstract class LiquidGlassRenderObject extends RenderProxyBox {
   LiquidGlassRenderObject({
     required GeometryRenderLink link,
@@ -70,27 +102,8 @@ abstract class LiquidGlassRenderObject extends RenderProxyBox {
   /// subtree is then relative to the pass, not the screen, and the backdrop
   /// texture the nested shader samples IS that pass. The live path's uniforms
   /// must be expressed against this rect rather than the screen.
-  Rect? enclosingBackdropPassRect() {
-    RenderObject? node = parent;
-    while (node != null) {
-      Rect? local;
-      if (node is RenderBackdropFilter) {
-        local = Offset.zero & node.size;
-      } else if (node is LiquidGlassRenderObject) {
-        local = node.backdropPassClipRectLocal;
-      }
-      if (local != null) {
-        final global = MatrixUtils.transformRect(
-          node.getTransformTo(null),
-          local,
-        );
-        // Coverage never exceeds the root surface.
-        return global.intersect(Offset.zero & desiredMatteSize);
-      }
-      node = node.parent;
-    }
-    return null;
-  }
+  Rect? enclosingBackdropPassRect() =>
+      enclosingBackdropPassRectAbove(this, rootSize: desiredMatteSize);
 
   Matrix4 get matteTransform;
 

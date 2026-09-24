@@ -3,6 +3,8 @@ import 'dart:ui' as ui;
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 
+import '../../src/engine/rendering/liquid_glass_render_object.dart';
+
 /// The edge a [ProgressiveBlur] is *strongest* at; it eases to perfectly sharp
 /// at the opposite edge. Named after the direction the blur travels — e.g.
 /// [topToBottom] is heavy at the top and dissolves downward (the classic
@@ -366,8 +368,20 @@ class _RenderProgressiveBlur extends RenderProxyBox {
       return;
     }
     // The offset in the backdrop layer's own coordinate space — which is what
-    // the shader's FlutterFragCoord() is expressed in.
-    final origin = localToGlobal(Offset.zero);
+    // the shader's FlutterFragCoord() is expressed in. On Impeller that space
+    // is the nearest enclosing backdrop pass (a BackdropFilter, or an
+    // own-layer glass surface), not the screen, whenever there is one: the
+    // pass renders this subtree offscreen, sized to its clip, and the shader
+    // samples that texture with coordinates from its top-left. Expressed
+    // against the screen, a blur nested in a frosted sheet lands displaced
+    // by the sheet's origin and blurs the wrong band.
+    final rootSize = switch (owner?.rootNode) {
+      final RenderView rv => rv.size,
+      final RenderBox rb => rb.size,
+      _ => Size.zero,
+    };
+    final pass = enclosingBackdropPassRectAbove(this, rootSize: rootSize);
+    final origin = localToGlobal(Offset.zero) - (pass?.topLeft ?? Offset.zero);
     _configure(_hShader, 0, origin);
     _configure(_vShader, 1, origin);
 
